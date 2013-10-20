@@ -1,0 +1,128 @@
+#!/bin/bash
+#################################################################################
+#
+# Author: Patrik Uhrak
+# Email: projectsdevel@gmail.com
+# Licence : GPLv3 http://www.opensource.org/licenses/gpl-3.0.html
+# version : 0.1_08092011
+# Description: Creates symbolic links of snapshots created by rsnapshot to
+#               to your own destination and the names of symbolic links
+#               are based on the date of each backup plus optionally
+#               interval as a suffix.
+#               Script can be ran by rsnapshot using postexec_cmd in its own
+#               configuration file or as a standalone one.
+#
+#################################################################################
+
+###
+### Global variables
+###
+
+# set to 0 (default 1 - add suffix ) if you don't want to have symlinks to your
+# snapshots in the following format:
+# date.interval i.e. 24.12.2012_18-00-00.daily based on the default rsnapshot.conf
+# (Most recently I have found out that the colon (:) is under Mac OSX translated to forward slash (/)
+# and therefore I would highly recommend to avoid using colons in case of sharing symlinks with
+# any Mac OSX based systems.)
+# Naming of intervals are purely up to you and it is up to me to get them and use them.;)
+declare -i intrsuffix=1
+declare dstroot
+declare -a intervals
+# dstlink MUST be declared by user. There is no other choice except using
+# some kind of a fallback. But the question is where the fallback should be placed.
+# So I do not personally think that I am expecting too much from user to specify where he wants
+# to store symlinks to his snapshots. ;)
+# Also you can adjust the dateformat to suite your needs.
+declare -r conf='/etc/rsnapshot.conf' dstlink='/srv/backup/backups/' dateformat='%d.%m.%Y_%H-%M-%S'
+
+###
+### Functions
+###
+
+CheckConfig(){
+# Well, I hope it does make sense to do the following. If it is ran as a standalone script
+# then it surely does make sense. :)
+if [[ ! -r "$conf" ]]
+then
+    printf "Configuration file for rsnapshot does not exist or at least it is not readable!\n"
+    exit 1
+fi
+}
+
+CheckDestlink(){
+if [[ -r "$dstlink" ]] && [[ -d "$dstlink" ]]
+then
+    :
+else
+    if ! mkdir "$dstlink" 2>/dev/null
+    then
+        printf "Can not create the folder for symlinks to snapshots!\nProbably a permission issue!\n"
+        exit 1
+    fi
+fi
+}
+
+GetBackupRoot(){
+local line
+local -r regex='^snapshot_root[[:blank:]]+(.*)$'
+
+while read line
+do
+    if [[ "$line" =~ $regex ]]
+    then
+        dstroot="${BASH_REMATCH[1]}" && break
+    fi
+done<"$conf"
+}
+
+GetBackupIntervals(){
+local line
+local -r regex='^retain[[:blank:]]+(.*)[[:blank:]]+[0-9]+$'
+
+while read line
+do
+    if [[ "$line" =~ $regex ]]
+    then
+        intervals=( "${intervals[@]}" "${BASH_REMATCH[1]}" )
+    fi
+done<"$conf"
+}
+
+CreateSymlinks(){
+local dir intr
+
+for dir in "${dstroot}"/*
+do
+    if (( "$intrsuffix" == 1 ))
+    then
+        for intr in "${intervals[@]}"
+        do
+            if [[ "$dir" =~ ^/.*/${intr}.[0-9]+$ ]]
+            then
+                born=$(date --date=@$(stat --printf=%Y "$dir" )  +"$dateformat" )
+                ln -s "${dir}" "${dstlink}${born}.${intr}"
+            fi
+        done
+    else
+        born=$(date --date=@$(stat --printf=%Y "$dir" )  +"$dateformat" )
+        ln -s "${dir}" "${dstlink}${born}"
+    fi
+done
+}
+
+DeleteSymlinks(){
+# I have no idea how to do any update to symlinks unless I recreate them all.
+# To be honest I am not very happy with this solution. Well, I hope I'll find a better one. ;)
+rm "${dstlink}"/* 2>/dev/null
+}
+
+###
+### Main
+###
+
+CheckConfig
+CheckDestlink
+GetBackupRoot
+GetBackupIntervals
+DeleteSymlinks
+CreateSymlinks
